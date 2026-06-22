@@ -13,9 +13,10 @@
 #include "MediaType.h"
 #include "AudioEngine.h"
 
-class AudioEngine;
+class PlayerController;
 
 class MediaCore {
+    friend class PlayerController;
 public:
     explicit MediaCore();
     ~MediaCore();
@@ -25,6 +26,19 @@ public:
     void Stop();
     void SetPause(bool pause);
     void SetVideoRenderer(IVideoRenderer* renderder);
+
+    // 用户通过 UI 调用的接口（传入秒数）
+    void Seek(double seconds);
+
+    // 获取当前播放进度（秒）
+    double GetPosition() { return videoClock.Get(); }
+    // 获取视频总长（秒）
+    double GetDuration() {
+        if (inputCtxPtr) {
+            return static_cast<double>(inputCtxPtr->duration) / AV_TIME_BASE;
+        }
+        return 0.0;
+    }
 
 private:
     void DemuxLoop();          // 拆包线程：负责从文件读 AVPacket
@@ -61,6 +75,11 @@ private:
     // 使用 std::atomic 是为了线程安全（多线程同时读写不会出错）
     std::atomic<bool> bStopDemux{false};
     std::atomic<bool> bPauseReq{true};
+
+    std::atomic<bool> bSeekReq{false};         // 是否有跳转请求
+    double seekTarget{0.0};                    // 跳转目标(s)
+    std::atomic<bool> audioNeedFlush{false};   // 音频冲水标志
+    std::atomic<bool> videoNeedFlush{false};   // 视频冲水标志
 };
 
 #endif

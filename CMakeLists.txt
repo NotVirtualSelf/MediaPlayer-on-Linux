@@ -19,6 +19,7 @@ qt_add_executable(${PROJECT_NAME}
     main.cpp
     src/core/MediaCore.cpp
     src/core/AudioEngine.cpp
+    src/core/PlayerController.cpp
 )
 
 qt_add_qml_module(${PROJECT_NAME}
@@ -29,6 +30,8 @@ qt_add_qml_module(${PROJECT_NAME}
     SOURCES
         src/quickitem/VideoDisplay.h
         src/quickitem/VideoDisplay.cpp
+        src/core/PlayerController.cpp
+        src/core/PlayerController.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

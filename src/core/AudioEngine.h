@@ -6,6 +6,7 @@
 #include <mutex>
 #include <atomic>
 #include <string>
+#include <vector>
 
 class AudioEngine {
 public:
@@ -20,10 +21,16 @@ public:
     void Write(const void* data, size_t bytes);
     void SetPause(bool pause);
 
+    // PulseAudio没有直接提供控制音量的函数，手动用数学乘法把波形压扁
+    void SetVolume(float volume);
+
 private:
     pa_simple* m_pa{nullptr};
     std::mutex m_mutex;
     std::atomic<bool> m_paused{false};
+
+    float m_volume{1.0f};
+    std::vector<uint8_t> m_volBuffer{};
 };
 
 #endif

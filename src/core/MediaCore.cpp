@@ -99,13 +99,40 @@ void MediaCore::SetPause(bool pause) {
     if (audioEngine) {
         audioEngine->SetPause(pause);
     }
+
+    // 如果是恢复播放，重置一下时钟的参考时间，避免快进
+    if (!pause) {
+        videoClock.Set(videoClock.Get(), 0);
+    }
 }
 
 // 拆包
 void MediaCore::DemuxLoop() {
     while (!bStopDemux) {
+        // 让解压和后续的渲染线程挂起，不然一直解析和渲染会占据内存
         if (bPauseReq) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        if (bSeekReq) {
+            int64_t targetTimeStamp = static_cast<int64_t>(seekTarget * AV_TIME_BASE);
+
+            // FFmpeg 的视频不仅有完整的关键帧 (I帧)，还有只存了差异的增量帧 (P/B帧)
+            // AVSEEK_FLAG_BACKWARD 表示：严格跳到目标时间之前的最近一个“关键帧”
+            // 如果跳到了普通的 P 帧，因为缺少前面的画面作为参考会花屏
+            if (av_seek_frame(inputCtxPtr.get(), -1, targetTimeStamp, AVSEEK_FLAG_BACKWARD) >= 0) {
+                if (audioDecoder) audioDecoder->Flush();
+                if (videoDecoder) videoDecoder->Flush();
+
+                audioNeedFlush = true;
+                videoNeedFlush = true;
+
+                audioClock.Set(seekTarget, 0);
+                videoClock.Set(seekTarget, 0);
+            }
+
+            bSeekReq = false;
             continue;
         }
 
@@ -134,6 +161,12 @@ void MediaCore::VideoDecodeLoop() {
         PacketUnit unit;
 
         if (videoDecoder && videoDecoder->pkt_queue.Pop(unit, bStopDemux)) {
+            if (videoNeedFlush) {
+                // FFmpeg 的解码器是有记忆的
+                // 内部会偷偷藏几张刚刚解压出来的历史画面，随时准备用来拼凑下一张画面。
+                avcodec_flush_buffers(videoDecoder->avctxPtr.get());
+                videoNeedFlush = false;
+            }
             // 把压缩包，丢进 FFmpeg 解压
             avcodec_send_packet(videoDecoder->avctxPtr.get(), unit.pkt.get());
 
@@ -167,6 +200,11 @@ void MediaCore::AudioDecodeLoop() {
         PacketUnit unit;
 
         if (audioDecoder && audioDecoder->pkt_queue.Pop(unit, bStopDemux)) {
+            if (audioNeedFlush) {
+                avcodec_flush_buffers(audioDecoder->avctxPtr.get());
+                audioNeedFlush = false;
+            }
+            
             // 把压缩包，丢进 FFmpeg 解压
             avcodec_send_packet(audioDecoder->avctxPtr.get(), unit.pkt.get());
 
@@ -242,5 +280,20 @@ void MediaCore::VideoRenderLoop() {
                 videoRenderer->PrepareFrame(unit.frame.get());
             }
         }
+    }
+}
+
+void MediaCore::Seek(double seconds) {
+    seekTarget = seconds;
+    bSeekReq = true;
+
+    if (audioDecoder) {
+        audioDecoder->pkt_queue.Wake();
+        audioDecoder->frame_queue.Wake();
+    }
+
+    if (videoDecoder) {
+        videoDecoder->pkt_queue.Wake();
+        videoDecoder->frame_queue.Wake();
     }
 }
